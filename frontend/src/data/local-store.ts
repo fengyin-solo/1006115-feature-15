@@ -57,3 +57,43 @@ export function resetRows(key: string): EntryRow[] {
 export function storageKey(): string {
   return STORAGE_KEY
 }
+
+// 配料偏差核对用的独立键：配方库、判定标准、核对结论各一份，不与模块清单混写。
+const KV_PREFIX = 'shield-tunnel-construction:'
+
+function readJson<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return clone(fallback)
+  }
+  const raw = window.localStorage.getItem(KV_PREFIX + key)
+  if (!raw) {
+    window.localStorage.setItem(KV_PREFIX + key, JSON.stringify(fallback))
+    return clone(fallback)
+  }
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    window.localStorage.setItem(KV_PREFIX + key, JSON.stringify(fallback))
+    return clone(fallback)
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem(KV_PREFIX + key, JSON.stringify(value))
+  }
+}
+
+export function loadKv<T>(key: string, fallback: T): T {
+  return readJson(key, fallback)
+}
+
+export function saveKv(key: string, value: unknown): void {
+  writeJson(key, value)
+}
+
+export function removeKv(key: string): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.removeItem(KV_PREFIX + key)
+  }
+}
