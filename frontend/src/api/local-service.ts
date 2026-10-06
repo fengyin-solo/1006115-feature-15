@@ -1,9 +1,24 @@
 import { MODULE_BY_KEY } from '@/data/modules'
-import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  allRows,
+  listRows,
+  resetMortarData,
+  resetRows,
+  saveRows,
+} from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import {
+  attachCheckConclusion,
+  gateGrouting,
+  listMortarRows,
+  submitMortarCheck,
+} from './mortar-check'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
+
+// 配料核对结论要回写到两处清单：浆液拌制是结论源头，试验检测与同步注浆从同一份投影。
+const ENRICHED_KEYS = new Set(['mortar', 'testing', 'grouting'])
 
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
@@ -23,13 +38,40 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
   )
 }
 
+/** 三个模块的读取顺着现有读法在这里收口：别处不再各写一套取数。 */
+export function moduleRows(key: string): EntryRow[] {
+  if (key === 'mortar') {
+    return listMortarRows()
+  }
+  if (key === 'testing' || key === 'grouting') {
+    return attachCheckConclusion(key)
+  }
+  return listRows(key)
+}
+
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
-  const matched = filterRows(listRows(key), filters)
+  const matched = filterRows(moduleRows(key), filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
-export function runAction(key: string, id: number, action: string): ActionResult {
+export function runAction(key: string, id: number, action: string, operator = ''): ActionResult {
   const meta = moduleMeta(key)
+
+  // 浆液拌制「提交检验」先过配料偏差核对，四条判定线任一超线都不许提交。
+  if (key === 'mortar' && action === '提交检验') {
+    return submitMortarCheck(id, operator || '值班管理员')
+  }
+
+  // 同步注浆「开始注浆」前核对待用批次：未核对或偏差超标的批次不能领用。
+  if (key === 'grouting' && action === '开始注浆') {
+    const rows = listRows(key)
+    const row = rows.find((item) => Number(item.id) === id)
+    const blocked = row ? gateGrouting(row) : null
+    if (blocked) {
+      return { ok: false, message: blocked }
+    }
+  }
+
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
@@ -57,7 +99,11 @@ export function runAction(key: string, id: number, action: string): ActionResult
 }
 
 export function resetModule(key: string): PageResult {
-  resetRows(key)
+  if (key === 'mortar') {
+    resetMortarData()
+  } else {
+    resetRows(key)
+  }
   return listEntries(key)
 }
 
@@ -65,10 +111,10 @@ export function exportEntries(key: string): { filename: string; content: string 
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
-  for (const row of listRows(key)) {
+  for (const row of moduleRows(key)) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
-  return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
+  return { filename: `${meta.name}-清单.csv`, content: `﻿${lines.join('\n')}` }
 }
 
 export function downloadEntries(key: string): void {
